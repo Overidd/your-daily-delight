@@ -79,10 +79,14 @@ export class AuthService {
   }
 
   async verify(token: string): Promise<IUser> {
+
     const resp = await fetch(`${this.URL_API}/auth/verify`, {
+      method: 'GET',
       headers: {
         Authorization: `Bearer ${token}`,
       },
+      body: JSON.stringify({ token }),
+
     });
 
     const result = await resp.json();
