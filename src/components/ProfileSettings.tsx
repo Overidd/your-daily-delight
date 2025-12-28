@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/hooks/useAuth';
-import { supabase } from '@/integrations/supabase/client';
 import { Profile } from '@/types/profile';
 import {
   Dialog,
@@ -13,7 +12,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { toast } from 'sonner';
-import { Loader2, User } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 
 interface ProfileSettingsProps {
   open: boolean;
@@ -30,64 +29,62 @@ export const ProfileSettings = ({ open, onOpenChange }: ProfileSettingsProps) =>
 
   useEffect(() => {
     if (open && user) {
-      loadProfile();
+      loadProfileFromStorage();
     }
   }, [open, user]);
 
-  const loadProfile = async () => {
+  const getStorageKey = (userId: string) => `profile:${userId}`;
+
+  const loadProfileFromStorage = () => {
     if (!user) return;
     setLoading(true);
 
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('user_id', user.id)
-      .maybeSingle();
-
-    if (error) {
-      toast.error('Error al cargar el perfil');
-      setLoading(false);
-      return;
-    }
-
-    if (data) {
-      setProfile(data as Profile);
-      setFullName(data.full_name || '');
-      setAvatarUrl(data.avatar_url || '');
-    } else {
-      // Create profile if doesn't exist
-      const { data: newProfile, error: createError } = await supabase
-        .from('profiles')
-        .insert({ user_id: user.id })
-        .select()
-        .single();
-
-      if (!createError && newProfile) {
-        setProfile(newProfile as Profile);
+    try {
+      const stored = localStorage.getItem(getStorageKey(user.id));
+      if (stored) {
+        const parsed: Profile = JSON.parse(stored);
+        setProfile(parsed);
+        setFullName(parsed.full_name || '');
+        setAvatarUrl(parsed.avatar_url || '');
+      } else {
+        const newProfile: Profile = {
+          id: user.id,
+          user_id: user.id,
+          full_name: null,
+          avatar_url: null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        setProfile(newProfile);
       }
+    } catch (error) {
+      toast.error('Error al cargar el perfil local');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
-  const handleSave = async () => {
+  const handleSave = () => {
     if (!user || !profile) return;
     setSaving(true);
 
-    const { error } = await supabase
-      .from('profiles')
-      .update({
-        full_name: fullName.trim() || null,
-        avatar_url: avatarUrl.trim() || null,
-      })
-      .eq('user_id', user.id);
+    const updatedProfile: Profile = {
+      ...profile,
+      full_name: fullName.trim() || null,
+      avatar_url: avatarUrl.trim() || null,
+      updated_at: new Date().toISOString(),
+    };
 
-    if (error) {
-      toast.error('Error al guardar el perfil');
-    } else {
-      toast.success('Perfil actualizado');
+    try {
+      localStorage.setItem(getStorageKey(user.id), JSON.stringify(updatedProfile));
+      setProfile(updatedProfile);
+      toast.success('Perfil actualizado (localmente)');
       onOpenChange(false);
+    } catch (error) {
+      toast.error('Error al guardar el perfil');
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
   };
 
   const getInitials = () => {

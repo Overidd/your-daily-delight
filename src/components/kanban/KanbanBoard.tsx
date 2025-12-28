@@ -11,7 +11,6 @@ import {
   closestCorners,
 } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
-import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { Board, Column, Task } from '@/types/kanban';
 import { KanbanColumn } from './KanbanColumn';
@@ -31,6 +30,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Profile } from '@/types/profile';
+import { todoService } from '@/service';
 
 export const KanbanBoard = () => {
   const { user, signOut } = useAuth();
@@ -54,171 +54,172 @@ export const KanbanBoard = () => {
 
   useEffect(() => {
     if (user) {
-      loadOrCreateBoard();
+      initializeBoard();
       loadProfile();
     }
   }, [user]);
 
-  const loadProfile = async () => {
-    if (!user) return;
-    const { data } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('user_id', user.id)
-      .maybeSingle();
-    
-    if (data) {
-      setProfile(data as Profile);
-    }
-  };
-
-  const loadOrCreateBoard = async () => {
+  const loadProfile = () => {
     if (!user) return;
 
-    const { data: existingBoard } = await supabase
-      .from('boards')
-      .select('*')
-      .eq('user_id', user.id)
-      .maybeSingle();
-
-    if (existingBoard) {
-      setBoard(existingBoard);
-      await loadBoardData(existingBoard.id);
-    } else {
-      const { data: newBoard, error } = await supabase
-        .from('boards')
-        .insert({ user_id: user.id, title: 'Mi Tablero' })
-        .select()
-        .single();
-
-      if (error) {
-        toast.error('Error al crear el tablero');
-        return;
-      }
-
-      setBoard(newBoard);
-
-      const defaultColumns = ['Por Hacer', 'En Progreso', 'Completado'];
-      const { data: createdColumns } = await supabase
-        .from('columns')
-        .insert(
-          defaultColumns.map((title, index) => ({
-            board_id: newBoard.id,
-            title,
-            position: index,
-          }))
-        )
-        .select();
-
-      if (createdColumns) {
-        setColumns(createdColumns);
-      }
-    }
-    setLoading(false);
+    // Ya no usamos Supabase para el perfil; solo usamos la info básica del usuario
+    setProfile({
+      id: user.id,
+      user_id: user.id,
+      full_name: user.name,
+      avatar_url: null,
+      created_at: '',
+      updated_at: '',
+    });
   };
 
-  const loadBoardData = async (boardId: string) => {
-    const [columnsResult, tasksResult] = await Promise.all([
-      supabase
-        .from('columns')
-        .select('*')
-        .eq('board_id', boardId)
-        .order('position'),
-      supabase.from('tasks').select('*').order('position'),
-    ]);
+  const initializeBoard = async () => {
+    if (!user) return;
 
-    if (columnsResult.data) {
-      setColumns(columnsResult.data);
-    }
-    if (tasksResult.data) {
-      const columnIds = columnsResult.data?.map(c => c.id) || [];
-      setTasks(tasksResult.data.filter(t => columnIds.includes(t.column_id)));
+    const now = new Date().toISOString();
+
+    // Tablero solo de frontend con 3 columnas fijas
+    const localBoard: Board = {
+      id: 'local-board',
+      user_id: user.id,
+      title: 'Mi Tablero',
+      created_at: now,
+      updated_at: now,
+    };
+
+    const fixedColumns: Column[] = [
+      {
+        id: 'Pendiente',
+        board_id: localBoard.id,
+        title: 'Pendiente',
+        position: 0,
+        created_at: now,
+      },
+      {
+        id: 'En proceso',
+        board_id: localBoard.id,
+        title: 'En proceso',
+        position: 1,
+        created_at: now,
+      },
+      {
+        id: 'Completados',
+        board_id: localBoard.id,
+        title: 'Completados',
+        position: 2,
+        created_at: now,
+      },
+    ];
+
+    setBoard(localBoard);
+    setColumns(fixedColumns);
+
+    try {
+      const todos = await todoService.getTodos();
+      const validCategories = new Set(fixedColumns.map((c) => c.title));
+
+      const mappedTasks: Task[] = todos.map((todo, index) => {
+        const status = String(todo.completed || '').toLowerCase();
+
+        let categoryFromStatus: string;
+        switch (status) {
+          case 'en proceso':
+            categoryFromStatus = 'En proceso';
+            break;
+          case 'completado':
+            categoryFromStatus = 'Completados';
+            break;
+          case 'pendiente':
+          default:
+            categoryFromStatus = 'Pendiente';
+            break;
+        }
+
+        const category =
+          todo.category && validCategories.has(todo.category)
+            ? todo.category
+            : categoryFromStatus;
+
+        return {
+          id: todo.id,
+          column_id: category,
+          title: todo.title,
+          description: todo.description ?? null,
+          position: index,
+          created_at: now,
+          updated_at: now,
+        };
+      });
+
+      setTasks(mappedTasks);
+    } catch (error) {
+      toast.error('Error al cargar tus tareas');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleAddColumn = async () => {
-    if (!newColumnTitle.trim() || !board) return;
-
-    const { data, error } = await supabase
-      .from('columns')
-      .insert({
-        board_id: board.id,
-        title: newColumnTitle.trim(),
-        position: columns.length,
-      })
-      .select()
-      .single();
-
-    if (error) {
-      toast.error('Error al crear la columna');
-      return;
-    }
-
-    setColumns([...columns, data]);
-    setNewColumnTitle('');
-    setIsAddingColumn(false);
-    toast.success('Columna creada');
+  const handleAddColumn = () => {
+    // Crear columnas está deshabilitado
+    toast.error('La creación de nuevas columnas está deshabilitada.');
   };
 
-  const handleDeleteColumn = async (columnId: string) => {
-    const { error } = await supabase.from('columns').delete().eq('id', columnId);
-
-    if (error) {
-      toast.error('Error al eliminar la columna');
-      return;
-    }
-
-    setColumns(columns.filter((c) => c.id !== columnId));
-    setTasks(tasks.filter((t) => t.column_id !== columnId));
-    toast.success('Columna eliminada');
+  const handleDeleteColumn = (columnId: string) => {
+    // Columnas fijas: no permitimos eliminarlas
+    toast.error('No puedes eliminar las columnas fijas.');
   };
 
-  const handleUpdateColumn = async (columnId: string, title: string) => {
-    const { error } = await supabase
-      .from('columns')
-      .update({ title })
-      .eq('id', columnId);
-
-    if (error) {
-      toast.error('Error al actualizar la columna');
-      return;
-    }
-
-    setColumns(columns.map((c) => (c.id === columnId ? { ...c, title } : c)));
+  const handleUpdateColumn = (columnId: string, title: string) => {
+    // Columnas fijas: no permitimos renombrarlas
+    toast.error('No puedes renombrar las columnas fijas.');
   };
 
   const handleAddTask = async (columnId: string, title: string) => {
-    const columnTasks = tasks.filter((t) => t.column_id === columnId);
-    
-    const { data, error } = await supabase
-      .from('tasks')
-      .insert({
-        column_id: columnId,
+    try {
+      const column = columns.find((c) => c.id === columnId);
+      const categoryName = column?.title ?? columnId;
+
+      const status =
+        categoryName === 'Completados'
+          ? 'completado'
+          : categoryName === 'En proceso'
+            ? 'en proceso'
+            : 'pendiente';
+
+      const newTodo = await todoService.createTodo({
         title,
+        description: '',
+        completed: status,
+        category: categoryName,
+      });
+
+      const columnTasks = tasks.filter((t) => t.column_id === columnId);
+
+      const newTask: Task = {
+        id: newTodo.id,
+        column_id: columnId,
+        title: newTodo.title,
+        description: newTodo.description ?? null,
         position: columnTasks.length,
-      })
-      .select()
-      .single();
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
 
-    if (error) {
+      setTasks([...tasks, newTask]);
+      toast.success('Tarea creada');
+    } catch (error) {
       toast.error('Error al crear la tarea');
-      return;
     }
-
-    setTasks([...tasks, data]);
-    toast.success('Tarea creada');
   };
 
   const handleDeleteTask = async (taskId: string) => {
-    const { error } = await supabase.from('tasks').delete().eq('id', taskId);
-
-    if (error) {
+    try {
+      await todoService.deleteTodo(taskId);
+      setTasks(tasks.filter((t) => t.id !== taskId));
+      toast.success('Tarea eliminada');
+    } catch (error) {
       toast.error('Error al eliminar la tarea');
-      return;
     }
-
-    setTasks(tasks.filter((t) => t.id !== taskId));
-    toast.success('Tarea eliminada');
   };
 
   const handleDragStart = (event: DragStartEvent) => {
@@ -244,7 +245,11 @@ export const KanbanBoard = () => {
         setTasks((prev) =>
           prev.map((t) =>
             t.id === activeId
-              ? { ...t, column_id: overId, position: tasks.filter(t => t.column_id === overId).length }
+              ? {
+                ...t,
+                column_id: overId,
+                position: tasks.filter((t) => t.column_id === overId).length,
+              }
               : t
           )
         );
@@ -256,9 +261,7 @@ export const KanbanBoard = () => {
     if (overTask && activeTask.column_id !== overTask.column_id) {
       setTasks((prev) =>
         prev.map((t) =>
-          t.id === activeId
-            ? { ...t, column_id: overTask.column_id }
-            : t
+          t.id === activeId ? { ...t, column_id: overTask.column_id } : t
         )
       );
     }
@@ -267,7 +270,7 @@ export const KanbanBoard = () => {
   const handleDragEnd = async (event: DragEndEvent) => {
     setActiveTask(null);
     const { active, over } = event;
-    
+
     if (!over) return;
 
     const activeId = active.id as string;
@@ -290,13 +293,13 @@ export const KanbanBoard = () => {
 
     const columnTasks = tasks.filter((t) => t.column_id === targetColumnId);
     const oldIndex = columnTasks.findIndex((t) => t.id === activeId);
-    const newIndex = overTask 
+    const newIndex = overTask
       ? columnTasks.findIndex((t) => t.id === overId)
       : columnTasks.length;
 
     if (oldIndex !== -1) {
       const reorderedTasks = arrayMove(columnTasks, oldIndex, newIndex);
-      
+
       const updatedTasks = tasks.map((t) => {
         if (t.column_id === targetColumnId) {
           const index = reorderedTasks.findIndex((rt) => rt.id === t.id);
@@ -306,24 +309,31 @@ export const KanbanBoard = () => {
       });
 
       setTasks(updatedTasks);
+    }
 
-      await Promise.all(
-        reorderedTasks.map((t, index) =>
-          supabase
-            .from('tasks')
-            .update({ position: index, column_id: targetColumnId })
-            .eq('id', t.id)
-        )
-      );
-    } else {
-      const newPosition = overTask 
-        ? columnTasks.findIndex((t) => t.id === overId)
-        : columnTasks.length;
+    // Actualizar el estado "completed" y la category del todo cuando cambie de columna
+    try {
+      const movedTask = tasks.find((t) => t.id === activeId);
+      const targetColumn = columns.find((c) => c.id === targetColumnId);
+      const categoryName = targetColumn?.title ?? targetColumnId;
 
-      await supabase
-        .from('tasks')
-        .update({ column_id: targetColumnId, position: newPosition })
-        .eq('id', activeId);
+      if (movedTask) {
+        const status =
+          categoryName === 'Completados'
+            ? 'completado'
+            : categoryName === 'En proceso'
+              ? 'en proceso'
+              : 'pendiente';
+
+        await todoService.updateTodo(activeId, {
+          title: movedTask.title,
+          description: movedTask.description ?? '',
+          completed: status,
+          category: categoryName,
+        });
+      }
+    } catch (error) {
+      toast.error('Error al actualizar la tarea');
     }
   };
 
@@ -365,10 +375,10 @@ export const KanbanBoard = () => {
               </p>
             </div>
           </div>
-          
+
           <div className="flex items-center gap-2">
             <ThemeToggle />
-            
+
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" className="relative h-9 w-9 rounded-full">
@@ -438,37 +448,14 @@ export const KanbanBoard = () => {
                 />
               ))}
 
-            {isAddingColumn ? (
-              <div className="w-72 flex-shrink-0 bg-secondary/50 rounded-xl p-3 space-y-2">
-                <Input
-                  placeholder="Nombre de la columna..."
-                  value={newColumnTitle}
-                  onChange={(e) => setNewColumnTitle(e.target.value)}
-                  autoFocus
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleAddColumn();
-                    if (e.key === 'Escape') setIsAddingColumn(false);
-                  }}
-                />
-                <div className="flex gap-2">
-                  <Button size="sm" onClick={handleAddColumn} className="flex-1">
-                    Crear
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => setIsAddingColumn(false)}>
-                    <X className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <Button
-                variant="outline"
-                className="w-72 h-12 flex-shrink-0 border-dashed"
-                onClick={() => setIsAddingColumn(true)}
-              >
-                <Plus className="h-4 w-4 mr-2" />
-                Agregar columna
-              </Button>
-            )}
+            <Button
+              variant="outline"
+              className="w-72 h-12 flex-shrink-0 border-dashed"
+              disabled
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Agregar columna (deshabilitado)
+            </Button>
           </div>
 
           <DragOverlay>
@@ -481,12 +468,11 @@ export const KanbanBoard = () => {
         </DndContext>
       </main>
 
-      <ProfileSettings 
-        open={profileOpen} 
+      <ProfileSettings
+        open={profileOpen}
         onOpenChange={(open) => {
           setProfileOpen(open);
-          if (!open) loadProfile();
-        }} 
+        }}
       />
     </div>
   );
