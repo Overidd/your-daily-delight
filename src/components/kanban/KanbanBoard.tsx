@@ -119,26 +119,15 @@ export const KanbanBoard = () => {
       const validCategories = new Set(fixedColumns.map((c) => c.title));
 
       const mappedTasks: Task[] = todos.map((todo, index) => {
-        const status = String(todo.completed || '').toLowerCase();
+        // completed y category deberían contener el nombre de la columna
+        const completedValue = String(todo.completed || '');
 
-        let categoryFromStatus: string;
-        switch (status) {
-          case 'en proceso':
-            categoryFromStatus = 'En proceso';
-            break;
-          case 'completado':
-            categoryFromStatus = 'Completados';
-            break;
-          case 'pendiente':
-          default:
-            categoryFromStatus = 'Pendiente';
-            break;
+        let category = 'Pendiente';
+        if (todo.category && validCategories.has(todo.category)) {
+          category = todo.category;
+        } else if (completedValue && validCategories.has(completedValue)) {
+          category = completedValue;
         }
-
-        const category =
-          todo.category && validCategories.has(todo.category)
-            ? todo.category
-            : categoryFromStatus;
 
         return {
           id: todo.id,
@@ -179,25 +168,19 @@ export const KanbanBoard = () => {
       const column = columns.find((c) => c.id === columnId);
       const categoryName = column?.title ?? columnId;
 
-      const status =
-        categoryName === 'Completados'
-          ? 'completado'
-          : categoryName === 'En proceso'
-            ? 'en proceso'
-            : 'pendiente';
-
+      // Guardamos el nombre de la columna tanto en completed como en category
       const newTodo = await todoService.createTodo({
         title,
         description: '',
-        completed: status,
+        completed: categoryName,
         category: categoryName,
       });
 
-      const columnTasks = tasks.filter((t) => t.column_id === columnId);
+      const columnTasks = tasks.filter((t) => t.column_id === categoryName);
 
       const newTask: Task = {
         id: newTodo.id,
-        column_id: columnId,
+        column_id: categoryName,
         title: newTodo.title,
         description: newTodo.description ?? null,
         position: columnTasks.length,
@@ -318,17 +301,11 @@ export const KanbanBoard = () => {
       const categoryName = targetColumn?.title ?? targetColumnId;
 
       if (movedTask) {
-        const status =
-          categoryName === 'Completados'
-            ? 'completado'
-            : categoryName === 'En proceso'
-              ? 'en proceso'
-              : 'pendiente';
-
+        // Sincronizamos ambos campos con el nombre de la columna destino
         await todoService.updateTodo(activeId, {
           title: movedTask.title,
           description: movedTask.description ?? '',
-          completed: status,
+          completed: categoryName,
           category: categoryName,
         });
       }
