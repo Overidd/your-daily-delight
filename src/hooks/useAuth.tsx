@@ -25,6 +25,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     const verifySession = async () => {
       const token = localStorage.getItem('token');
+      console.log('peroooo', token)
 
       if (!token) {
         setLoading(false);
