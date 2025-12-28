@@ -15,12 +15,22 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { Board, Column, Task } from '@/types/kanban';
 import { KanbanColumn } from './KanbanColumn';
-import { TaskCard } from './TaskCard';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Plus, LogOut, LayoutGrid, X } from 'lucide-react';
+import { Plus, LogOut, LayoutGrid, X, Settings } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card } from '@/components/ui/card';
+import { ThemeToggle } from '@/components/ThemeToggle';
+import { ProfileSettings } from '@/components/ProfileSettings';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Profile } from '@/types/profile';
 
 export const KanbanBoard = () => {
   const { user, signOut } = useAuth();
@@ -31,6 +41,8 @@ export const KanbanBoard = () => {
   const [isAddingColumn, setIsAddingColumn] = useState(false);
   const [newColumnTitle, setNewColumnTitle] = useState('');
   const [loading, setLoading] = useState(true);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [profile, setProfile] = useState<Profile | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -43,13 +55,26 @@ export const KanbanBoard = () => {
   useEffect(() => {
     if (user) {
       loadOrCreateBoard();
+      loadProfile();
     }
   }, [user]);
+
+  const loadProfile = async () => {
+    if (!user) return;
+    const { data } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('user_id', user.id)
+      .maybeSingle();
+    
+    if (data) {
+      setProfile(data as Profile);
+    }
+  };
 
   const loadOrCreateBoard = async () => {
     if (!user) return;
 
-    // Try to get existing board
     const { data: existingBoard } = await supabase
       .from('boards')
       .select('*')
@@ -60,7 +85,6 @@ export const KanbanBoard = () => {
       setBoard(existingBoard);
       await loadBoardData(existingBoard.id);
     } else {
-      // Create new board with default columns
       const { data: newBoard, error } = await supabase
         .from('boards')
         .insert({ user_id: user.id, title: 'Mi Tablero' })
@@ -74,7 +98,6 @@ export const KanbanBoard = () => {
 
       setBoard(newBoard);
 
-      // Create default columns
       const defaultColumns = ['Por Hacer', 'En Progreso', 'Completado'];
       const { data: createdColumns } = await supabase
         .from('columns')
@@ -108,7 +131,6 @@ export const KanbanBoard = () => {
       setColumns(columnsResult.data);
     }
     if (tasksResult.data) {
-      // Filter tasks to only those in this board's columns
       const columnIds = columnsResult.data?.map(c => c.id) || [];
       setTasks(tasksResult.data.filter(t => columnIds.includes(t.column_id)));
     }
@@ -216,10 +238,8 @@ export const KanbanBoard = () => {
     const activeTask = tasks.find((t) => t.id === activeId);
     if (!activeTask) return;
 
-    // Check if dropping over a column
     const overColumn = columns.find((c) => c.id === overId);
     if (overColumn) {
-      // Moving to empty column or column itself
       if (activeTask.column_id !== overId) {
         setTasks((prev) =>
           prev.map((t) =>
@@ -232,7 +252,6 @@ export const KanbanBoard = () => {
       return;
     }
 
-    // Check if dropping over another task
     const overTask = tasks.find((t) => t.id === overId);
     if (overTask && activeTask.column_id !== overTask.column_id) {
       setTasks((prev) =>
@@ -259,7 +278,6 @@ export const KanbanBoard = () => {
     const activeTask = tasks.find((t) => t.id === activeId);
     if (!activeTask) return;
 
-    // Get the target column
     let targetColumnId = activeTask.column_id;
     const overColumn = columns.find((c) => c.id === overId);
     const overTask = tasks.find((t) => t.id === overId);
@@ -270,7 +288,6 @@ export const KanbanBoard = () => {
       targetColumnId = overTask.column_id;
     }
 
-    // Reorder tasks in target column
     const columnTasks = tasks.filter((t) => t.column_id === targetColumnId);
     const oldIndex = columnTasks.findIndex((t) => t.id === activeId);
     const newIndex = overTask 
@@ -280,7 +297,6 @@ export const KanbanBoard = () => {
     if (oldIndex !== -1) {
       const reorderedTasks = arrayMove(columnTasks, oldIndex, newIndex);
       
-      // Update positions
       const updatedTasks = tasks.map((t) => {
         if (t.column_id === targetColumnId) {
           const index = reorderedTasks.findIndex((rt) => rt.id === t.id);
@@ -291,7 +307,6 @@ export const KanbanBoard = () => {
 
       setTasks(updatedTasks);
 
-      // Update in database
       await Promise.all(
         reorderedTasks.map((t, index) =>
           supabase
@@ -301,7 +316,6 @@ export const KanbanBoard = () => {
         )
       );
     } else {
-      // Task moved from different column
       const newPosition = overTask 
         ? columnTasks.findIndex((t) => t.id === overId)
         : columnTasks.length;
@@ -313,11 +327,23 @@ export const KanbanBoard = () => {
     }
   };
 
+  const getInitials = () => {
+    if (profile?.full_name) {
+      return profile.full_name
+        .split(' ')
+        .map((n) => n[0])
+        .join('')
+        .toUpperCase()
+        .slice(0, 2);
+    }
+    return user?.email?.[0]?.toUpperCase() || 'U';
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="text-center space-y-4">
-          <div className="w-12 h-12 rounded-xl mx-auto animate-pulse" style={{ background: 'var(--gradient-primary)' }} />
+          <div className="w-12 h-12 rounded-xl mx-auto animate-pulse bg-primary" />
           <p className="text-muted-foreground">Cargando tablero...</p>
         </div>
       </div>
@@ -326,26 +352,67 @@ export const KanbanBoard = () => {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      {/* Header */}
       <header className="border-b border-border bg-card/50 backdrop-blur-lg sticky top-0 z-50">
         <div className="px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'var(--gradient-primary)' }}>
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-primary">
               <LayoutGrid className="w-5 h-5 text-primary-foreground" />
             </div>
             <div>
               <h1 className="text-xl font-bold gradient-text">{board?.title}</h1>
-              <p className="text-xs text-muted-foreground">{user?.email}</p>
+              <p className="text-xs text-muted-foreground">
+                {profile?.full_name || user?.email}
+              </p>
             </div>
           </div>
-          <Button variant="ghost" onClick={signOut} className="gap-2">
-            <LogOut className="h-4 w-4" />
-            Cerrar sesión
-          </Button>
+          
+          <div className="flex items-center gap-2">
+            <ThemeToggle />
+            
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" className="relative h-9 w-9 rounded-full">
+                  <Avatar className="h-9 w-9">
+                    <AvatarImage src={profile?.avatar_url || ''} alt="Avatar" />
+                    <AvatarFallback className="bg-primary text-primary-foreground text-sm">
+                      {getInitials()}
+                    </AvatarFallback>
+                  </Avatar>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <div className="flex items-center gap-2 p-2">
+                  <Avatar className="h-8 w-8">
+                    <AvatarImage src={profile?.avatar_url || ''} alt="Avatar" />
+                    <AvatarFallback className="bg-primary text-primary-foreground text-xs">
+                      {getInitials()}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium">
+                      {profile?.full_name || 'Sin nombre'}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {user?.email}
+                    </span>
+                  </div>
+                </div>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => setProfileOpen(true)}>
+                  <Settings className="mr-2 h-4 w-4" />
+                  Configuración
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={signOut} className="text-destructive">
+                  <LogOut className="mr-2 h-4 w-4" />
+                  Cerrar sesión
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
       </header>
 
-      {/* Board */}
       <main className="flex-1 overflow-x-auto p-6">
         <DndContext
           sensors={sensors}
@@ -371,7 +438,6 @@ export const KanbanBoard = () => {
                 />
               ))}
 
-            {/* Add Column */}
             {isAddingColumn ? (
               <div className="w-72 flex-shrink-0 bg-secondary/50 rounded-xl p-3 space-y-2">
                 <Input
@@ -414,6 +480,14 @@ export const KanbanBoard = () => {
           </DragOverlay>
         </DndContext>
       </main>
+
+      <ProfileSettings 
+        open={profileOpen} 
+        onOpenChange={(open) => {
+          setProfileOpen(open);
+          if (!open) loadProfile();
+        }} 
+      />
     </div>
   );
 };
